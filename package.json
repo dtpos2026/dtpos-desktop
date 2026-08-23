@@ -1,0 +1,33 @@
+{
+  "name": "dtpos-desktop",
+  "productName": "DT POS",
+  "version": "1.26.9",
+  "description": "DT POS \u2014 Windows desktop shell for the DT POS restaurant point of sale",
+  "author": {
+    "name": "Digital Target",
+    "email": "support@digitaltarget.digital"
+  },
+  "homepage": "https://digitaltarget.digital",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "out/main/index.js",
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('out',{recursive:true,force:true})\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/build-preload.mjs",
+    "renderer": "node scripts/sync-renderer.mjs",
+    "start": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --win --dir",
+    "dist": "npm run build && electron-builder --win",
+    "test": "node --test test/*.test.mjs",
+    "smoke": "npm run build && node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.8.3",
+    "esbuild": "^0.24.2"
+  },
+  "dependencies": {}
+}

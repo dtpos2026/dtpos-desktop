@@ -1,0 +1,90 @@
+# ============================================================================
+# Build the Windows installer on a real Windows runner.
+#
+# The final packaging steps — stamping version metadata and the icon into the
+# .exe (rcedit) and building the NSIS installer — are Windows binaries.
+# electron-builder can shim them through wine on Linux, but that needs 32-bit
+# wine, so a Linux CI box is the wrong tool for the last mile. A windows-latest
+# runner does it natively, with nothing to shim.
+#
+# The renderer is NOT vendored here. It is built from the web repo so the
+# installer always ships the POS that repo currently produces, and the two can
+# never drift.
+# ============================================================================
+name: Build Windows installer
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      pos_ref:
+        description: 'Branch or tag of digitaltarget.digital to package'
+        default: 'main'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the desktop shell
+        uses: actions/checkout@v4
+        with:
+          path: shell
+
+      - name: Check out the POS web app
+        uses: actions/checkout@v4
+        with:
+          repository: dtpos2026/digitaltarget.digital
+          ref: ${{ github.event.inputs.pos_ref || 'main' }}
+          path: pos
+          token: ${{ secrets.POS_REPO_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: shell/package-lock.json
+
+      # The Supabase keys are compiled into the renderer bundle. They are the
+      # PUBLISHABLE keys — the same ones the website already serves to every
+      # browser — never the service-role key, which must not exist in CI.
+      - name: Build the POS client bundle
+        working-directory: pos
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          npm ci
+          npm run build:desktop
+
+      - name: Install shell dependencies
+        working-directory: shell
+        run: npm ci
+
+      - name: Typecheck and test
+        working-directory: shell
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Stage the renderer
+        working-directory: shell
+        env:
+          DTPOS_RENDERER: ${{ github.workspace }}\pos\dist-desktop\client
+        run: npm run renderer
+
+      - name: Build the installer
+        working-directory: shell
+        run: npx electron-builder --win --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DT-POS-Windows
+          path: |
+            shell/release/*.exe
+            shell/release/*.blockmap
+          if-no-files-found: error

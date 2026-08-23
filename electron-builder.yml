@@ -1,0 +1,61 @@
+# ============================================================================
+# Windows packaging for DT POS.
+#
+# Two artifacts, on purpose:
+#   nsis      the installer a restaurant runs once, per-machine so a shared
+#             till works for every Windows user account
+#   portable  a single .exe for a machine where installing is not allowed
+# ============================================================================
+appId: digital.digitaltarget.dtpos
+productName: DT POS
+copyright: Copyright © Digital Target
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the compiled shell ships. No TypeScript sources, no dev dependencies.
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+# The POS client bundle is copied in by scripts/sync-renderer.mjs and served
+# from resources/renderer over app://.
+extraResources:
+  - from: renderer
+    to: renderer
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.png
+  artifactName: DT-POS-Setup-${version}.${ext}
+  # No signing certificate is configured. Windows SmartScreen will warn on
+  # first run until one is added here — see README.
+  verifyUpdateCodeSignature: false
+
+nsis:
+  oneClick: false                 # a till operator should see where it installs
+  perMachine: true                # shared machine: every Windows user gets it
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DT POS
+  installerIcon: build/icon.png
+  uninstallerIcon: build/icon.png
+  # Leaves userData (the offline JSON store and the sync queue) in place, so an
+  # upgrade never costs a restaurant its unsynced bills.
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: DT-POS-Portable-${version}.${ext}
+
+# Disabled deliberately. The POS already owns the update decision: it compares
+# its APP_VERSION against getAppVersion() and calls downloadAndRunInstaller().
+# Turning on electron-updater as well would give a till two update mechanisms
+# racing each other.
+publish: null

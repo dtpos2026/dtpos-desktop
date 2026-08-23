@@ -1,0 +1,136 @@
+// ============================================================================
+// Serving the POS over app:// instead of file://
+//
+// ===== WHY NOT file:// =====
+// A file:// page has an opaque origin. That breaks three things this POS needs:
+//   - localStorage / IndexedDB are unreliable or per-file, and the POS keeps
+//     its offline cache and its deferred sync queue there
+//   - Supabase's auth and realtime clients send an Origin header; an opaque
+//     one is rejected
+//   - the app's assets are referenced by ABSOLUTE paths (/assets/...), which
+//     resolve against the filesystem root under file://
+//
+// app://dtpos/ is registered as a standard, secure scheme, so it behaves like
+// https: a stable origin, working storage, and fetch that Supabase accepts —
+// while still reading from disk, so the till works with no network at all.
+// ============================================================================
+import { protocol, net } from 'electron';
+import { existsSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { join, normalize, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { randomBytes } from 'node:crypto';
+
+export const APP_SCHEME = 'app';
+export const APP_ORIGIN = `${APP_SCHEME}://dtpos`;
+
+/** Must be called before app 'ready'. */
+export function registerAppScheme(): void {
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: APP_SCHEME,
+      privileges: {
+        standard: true,      // a real origin, so storage and CORS behave
+        secure: true,        // counts as a secure context (service workers, crypto.subtle)
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,        // range requests, for media
+      },
+    },
+  ]);
+}
+
+/**
+ * @param rootDir directory holding index.html and assets/ (the POS
+ *                `dist-desktop/client` output, copied in at package time)
+ */
+export function serveAppScheme(rootDir: string): void {
+  protocol.handle(APP_SCHEME, (request) => {
+    const url = new URL(request.url);
+
+    // Only our own host is served. app://something-else/ resolves to nothing.
+    if (url.hostname !== 'dtpos') {
+      return new Response('Not found', { status: 404 });
+    }
+
+    const resolved = resolveWithinRoot(rootDir, decodeURIComponent(url.pathname));
+    if (!resolved) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    // The POS is a single-route SPA that navigates by hash, but a deep link or
+    // a reload on an unknown path must still land on the shell rather than 404.
+    const isFile = existsSync(resolved) && statSync(resolved).isFile();
+    const target = isFile ? resolved : join(rootDir, 'index.html');
+
+    // The document carries the CSP; assets do not need one. Serving it here
+    // rather than through a blanket webRequest filter is what makes the nonce
+    // possible, because the same response that sets the header also writes it
+    // into the HTML.
+    if (target.endsWith('index.html')) return serveDocument(target);
+
+    return net.fetch(pathToFileURL(target).toString());
+  });
+}
+
+/**
+ * ===== Why the shell rewrites index.html =====
+ *
+ * TanStack Start's prerendered shell contains two INLINE <script> blocks: the
+ * hydration payload and the stream barrier. Under a strict `script-src 'self'`
+ * the browser refuses both, and the app dies on "Invariant failed" with a blank
+ * window — the POS never mounts.
+ *
+ * The lazy fix is 'unsafe-inline', which readmits every injected script along
+ * with the two legitimate ones. Instead each response gets a fresh random
+ * nonce, stamped onto exactly the inline scripts that shipped in the build and
+ * named in that same response's CSP. Inline script that was not in the bundle
+ * still cannot run.
+ */
+async function serveDocument(file: string): Promise<Response> {
+  const nonce = randomBytes(16).toString('base64');
+  const html = (await readFile(file, 'utf8'))
+    // Only tags with no src= are inline; the module script is loaded by URL and
+    // is already covered by 'self'.
+    .replace(/<script(?![^>]*\bsrc=)([^>]*)>/gi, `<script nonce="${nonce}"$1>`);
+
+  return new Response(html, {
+    status: 200,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': documentCsp(nonce),
+    },
+  });
+}
+
+function documentCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    // The POS injects print stylesheets at runtime to lay out receipts, so
+    // inline STYLE is required. Inline script is not, and does not get in.
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https:",
+    "connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in https://digitaltarget.digital",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'none'",
+  ].join('; ');
+}
+
+/**
+ * Join a request path onto the root and refuse anything that escapes it.
+ *
+ * `..` segments, encoded or not, are the classic way to read C:\ out of a
+ * packaged app. normalize() collapses them first, then the result is checked to
+ * be inside root — a prefix test alone would accept a sibling directory whose
+ * name merely starts with the root's.
+ */
+function resolveWithinRoot(rootDir: string, pathname: string): string | null {
+  const candidate = normalize(join(rootDir, pathname === '/' ? 'index.html' : pathname));
+  const rootWithSep = rootDir.endsWith(sep) ? rootDir : rootDir + sep;
+  if (candidate !== rootDir && !candidate.startsWith(rootWithSep)) return null;
+  return candidate;
+}
