@@ -53,6 +53,21 @@ export function attachSmokeProbe(win: BrowserWindow): void {
         idbWorks: typeof indexedDB !== 'undefined',
       }))()`);
       smoke('PAINTED ' + JSON.stringify(painted));
+
+      // The staff-login path goes through a server function. Prove the shell
+      // forwards it to the backend and hands JSON back to the page, from the
+      // page's own origin (so the CSP's connect-src 'self' still covers it).
+      const proxied = await win.webContents.executeJavaScript(`(async () => {
+        try {
+          const r = await fetch('/_serverFn/smoke-ping', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: 'Bearer smoke.token.value' },
+            body: JSON.stringify({ hello: 'world' }),
+          });
+          return { status: r.status, body: (await r.text()).slice(0, 200) };
+        } catch (e) { return { error: String(e) }; }
+      })()`);
+      smoke('SERVERFN ' + JSON.stringify(proxied));
       smoke('DONE');
     } catch (err) {
       smoke('PROBE ERROR ' + ((err as Error)?.stack || String(err)));

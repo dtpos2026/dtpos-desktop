@@ -97,6 +97,29 @@ Main refuses to finish starting if a declared channel has no handler
 (`assertContractComplete`), so a missing one is a loud crash in development
 rather than a call that rejects mid-shift on a counter.
 
+## Server functions
+
+A few POS operations run with the Supabase **service-role** key — staff
+sign-in, saving a staff user, provisioning a restaurant. That key cannot ship
+inside a desktop binary: a `.exe` on a customer's counter is fully readable, and
+the service-role key bypasses every RLS policy. So they stay server-side.
+
+The renderer posts them to the relative `/_serverFn/…`, which inside the shell
+would resolve to `app://dtpos/_serverFn/…` and hit the SPA fallback — staff
+login failing with a JSON parse error on a page of HTML. The shell forwards
+those requests to the hosted deployment instead, so the renderer bundle stays
+byte-identical to the web build and only the shell knows where the backend is.
+
+    DTPOS_API_ORIGIN=https://staging.example.com   # defaults to digitaltarget.digital
+
+Authentication is a Bearer token, not a cookie, so only `authorization`,
+`content-type` and `accept` are forwarded — an allow-list, not a blanket copy.
+`npm run smoke` asserts the round trip against a stub backend.
+
+**This means staff sign-in needs internet.** That is inherent, not a shortcut:
+the check requires a key that must never leave a server. Everything else — the
+POS, billing, printing, the offline queue — works with no network at all.
+
 ## Auto-update
 
 The POS already owns the update decision: it compares its own `APP_VERSION`

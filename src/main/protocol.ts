@@ -24,6 +24,27 @@ import { randomBytes } from 'node:crypto';
 export const APP_SCHEME = 'app';
 export const APP_ORIGIN = `${APP_SCHEME}://dtpos`;
 
+/**
+ * ===== Server functions still need a server =====
+ *
+ * A handful of the POS's operations run with the Supabase SERVICE-ROLE key —
+ * staff sign-in, saving a staff user, provisioning a restaurant. That key
+ * cannot ship inside a desktop binary: a .exe sitting on a customer's counter
+ * is fully readable, and the service-role key bypasses every RLS policy on the
+ * database. So those stay server-side.
+ *
+ * The renderer posts them to the relative "/_serverFn/...", which inside the
+ * shell resolves to app://dtpos/_serverFn/... and would hit the SPA fallback —
+ * staff login would fail with a JSON parse error on a page of HTML. Forwarding
+ * them to the hosted deployment keeps the renderer bundle byte-identical to the
+ * web build; the shell simply knows where this deployment's backend lives.
+ *
+ * Authentication is a Bearer token in the request, not a cookie, so forwarding
+ * the headers is all that is required.
+ */
+const SERVER_FN_PREFIX = '/_serverFn/';
+const API_ORIGIN = (process.env.DTPOS_API_ORIGIN || 'https://digitaltarget.digital').replace(/\/$/, '');
+
 /** Must be called before app 'ready'. */
 export function registerAppScheme(): void {
   protocol.registerSchemesAsPrivileged([
@@ -53,6 +74,10 @@ export function serveAppScheme(rootDir: string): void {
       return new Response('Not found', { status: 404 });
     }
 
+    if (url.pathname.startsWith(SERVER_FN_PREFIX)) {
+      return proxyServerFn(request, url);
+    }
+
     const resolved = resolveWithinRoot(rootDir, decodeURIComponent(url.pathname));
     if (!resolved) {
       return new Response('Forbidden', { status: 403 });
@@ -71,6 +96,43 @@ export function serveAppScheme(rootDir: string): void {
 
     return net.fetch(pathToFileURL(target).toString());
   });
+}
+
+/**
+ * Forward one server-function call to the hosted deployment.
+ *
+ * Only the headers that matter are passed on — the caller's Supabase bearer
+ * token and the content type. Nothing else from the renderer is copied across,
+ * and a failure returns a JSON body so the POS shows its own error rather than
+ * choking on an HTML error page.
+ */
+async function proxyServerFn(request: Request, url: URL): Promise<Response> {
+  const target = `${API_ORIGIN}${url.pathname}${url.search}`;
+  const headers = new Headers();
+  for (const name of ['authorization', 'content-type', 'accept']) {
+    const v = request.headers.get(name);
+    if (v) headers.set(name, v);
+  }
+  try {
+    const upstream = await net.fetch(target, {
+      method: request.method,
+      headers,
+      body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
+      duplex: 'half',
+    } as RequestInit);
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: {
+        'content-type': upstream.headers.get('content-type') ?? 'application/json',
+      },
+    });
+  } catch (e) {
+    // Offline is the normal case for a till, not an exception. Say so plainly.
+    return new Response(
+      JSON.stringify({ error: `Cannot reach ${API_ORIGIN}: ${e instanceof Error ? e.message : String(e)}` }),
+      { status: 503, headers: { 'content-type': 'application/json' } },
+    );
+  }
 }
 
 /**

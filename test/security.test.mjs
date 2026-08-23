@@ -144,6 +144,15 @@ test('new windows and stray navigations never open inside the app', () => {
   assert.match(sec, /will-attach-webview/);
 });
 
+test('the server-function proxy defaults to https and forwards nothing extra', () => {
+  const proto = read('src/main/protocol.ts');
+  assert.match(proto, /'https:\/\/digitaltarget\.digital'/, 'the default backend must be https');
+  // An allow-list of headers, not a blanket copy: the renderer must not be able
+  // to smuggle arbitrary headers to the backend through the shell.
+  assert.match(proto, /\['authorization', 'content-type', 'accept'\]/);
+  assert.doesNotMatch(proto, /headers:\s*request\.headers/);
+});
+
 test('no secret is baked into the shell', () => {
   const all = ['src/main/index.ts', 'src/main/security.ts', 'src/main/protocol.ts',
     'src/main/ipc/system.ts', 'src/main/ipc/files.ts', 'src/main/ipc/printing.ts',
