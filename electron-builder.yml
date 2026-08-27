@@ -37,6 +37,25 @@ win:
   # No signing certificate is configured. Windows SmartScreen will warn on
   # first run until one is added here — see README.
   verifyUpdateCodeSignature: false
+  # ===== v1.28.2 — the winCodeSign symlink trap =====
+  #
+  # Leave rcedit ON: it stamps the version and icon into the .exe, and on
+  # Windows electron-builder runs it through its own bundled binary, which
+  # involves no symlinks.
+  #
+  #     signAndEditExecutable: false   <- would also disable rcedit; do not.
+  #
+  # What DOES pull in the archive full of macOS .dylib symlinks is the SIGNING
+  # step, and electron-builder reaches it by auto-discovering a certificate
+  # from the Windows certificate store. On a machine that happens to hold one,
+  # extraction fails with "Cannot create symbolic link: A required privilege is
+  # not held by the client" — which is why the same repo builds on one PC and
+  # not another.
+  #
+  # `npm run dist` goes through scripts/build-windows.mjs, which sets
+  # CSC_IDENTITY_AUTO_DISCOVERY=false so signing is skipped and the archive is
+  # never fetched. Build with DT_ALLOW_SIGNING=1 once a certificate is real.
+  signAndEditExecutable: true
 
 nsis:
   oneClick: false                 # a till operator should see where it installs

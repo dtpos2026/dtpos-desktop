@@ -2,7 +2,7 @@
   "name": "dtpos-desktop",
   "productName": "DT POS",
   "version": "1.26.9",
-  "description": "DT POS \u2014 Windows desktop shell for the DT POS restaurant point of sale",
+  "description": "DT POS — Windows desktop shell for the DT POS restaurant point of sale",
   "author": {
     "name": "Digital Target",
     "email": "support@digitaltarget.digital"
@@ -17,10 +17,11 @@
     "build": "npm run clean && tsc -p tsconfig.json && node scripts/build-preload.mjs",
     "renderer": "node scripts/sync-renderer.mjs",
     "start": "npm run build && electron .",
-    "pack": "npm run build && electron-builder --win --dir",
-    "dist": "npm run build && electron-builder --win",
+    "pack": "npm run build && node scripts/build-windows.mjs --dir",
+    "dist": "npm run build && node scripts/build-windows.mjs",
     "test": "node --test test/*.test.mjs",
-    "smoke": "npm run build && node scripts/smoke.mjs"
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "dist:clean": "npm run build && node scripts/build-windows.mjs --clean"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
