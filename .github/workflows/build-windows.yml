@@ -19,8 +19,8 @@ on:
   workflow_dispatch:
     inputs:
       pos_ref:
-        description: 'Branch or tag of digitaltarget.digital to package'
-        default: 'main'
+        description: 'Branch or tag of digitaltarget.digital to package (blank = its default branch)'
+        default: ''
 
 permissions:
   contents: read
@@ -34,11 +34,39 @@ jobs:
         with:
           path: shell
 
+      # github.token is scoped to THIS repository. If digitaltarget.digital is
+      # private, the checkout below answers 404 — which reads as "the branch
+      # does not exist" rather than "this job may not read that repository".
+      # Say which one it is before the confusing failure, not after.
+      - name: Check the cross-repository token
+        shell: bash
+        env:
+          HAS_PAT: ${{ secrets.POS_REPO_TOKEN != '' }}
+        run: |
+          if [ "$HAS_PAT" = "true" ]; then
+            echo "POS_REPO_TOKEN is set — the POS repository will be read with it."
+          else
+            echo "::warning::POS_REPO_TOKEN is not set. github.token can only read THIS"\
+                 "repository, so checking out digitaltarget.digital will 404 if it is"\
+                 "private. Add a repo-scoped PAT as the POS_REPO_TOKEN secret."
+          fi
+
       - name: Check out the POS web app
         uses: actions/checkout@v4
         with:
           repository: dtpos2026/digitaltarget.digital
-          ref: ${{ github.event.inputs.pos_ref || 'main' }}
+          # ===== v1.28.4 — this said 'main', and there is no main =====
+          #
+          # The POS repository has exactly one branch, and it is not called
+          # main. So this checkout could not resolve its ref and the job died
+          # at step two, before Node was even installed — every time, for as
+          # long as the workflow has existed. That is the whole of "the Windows
+          # app is not building".
+          #
+          # Blank means "that repository's default branch", which stays correct
+          # when the branch is renamed or main is finally created. A tag push
+          # (on: push: tags) supplies its own ref, which is the release case.
+          ref: ${{ github.event.inputs.pos_ref }}
           path: pos
           token: ${{ secrets.POS_REPO_TOKEN || github.token }}
 
@@ -77,9 +105,23 @@ jobs:
           DTPOS_RENDERER: ${{ github.workspace }}\pos\dist-desktop\client
         run: npm run renderer
 
+      # Through scripts/build-windows.mjs, not electron-builder directly: the
+      # script sets CSC_IDENTITY_AUTO_DISCOVERY=false, which is what keeps the
+      # winCodeSign archive — and its macOS .dylib SYMLINKS, which Windows
+      # refuses to create without SeCreateSymbolicLinkPrivilege — out of the
+      # build. A runner that happens to hold any code-signing certificate would
+      # otherwise reach for it and fail with "Cannot create symbolic link".
       - name: Build the installer
         working-directory: shell
-        run: npx electron-builder --win --publish never
+        run: npm run dist:clean
+
+      - name: Show what was produced
+        working-directory: shell
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem release -Filter *.exe -ErrorAction SilentlyContinue
+          if (-not $files) { Write-Error "No installer was produced."; exit 1 }
+          $files | ForEach-Object { "{0}  {1:N2} MB" -f $_.Name, ($_.Length / 1MB) }
 
       - uses: actions/upload-artifact@v4
         with:

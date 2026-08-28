@@ -39,6 +39,9 @@
 //   node scripts/build-windows.mjs --dir       unpacked only, no installer
 //   node scripts/build-windows.mjs --clean     purge the poisoned cache first
 //
+// It also refuses to package an empty renderer/, which is what a fresh clone
+// has — see the check below.
+//
 // TO SIGN THE BUILD INSTEAD
 // Set WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD (or win.signtoolOptions in
 // electron-builder.yml) and run with DT_ALLOW_SIGNING=1. You then DO need the
@@ -78,6 +81,37 @@ if (clean) {
     console.log(`[build-windows] removed the partially-extracted cache: ${stale}`);
   } else {
     console.log('[build-windows] no winCodeSign cache to remove');
+  }
+}
+
+// ------------------------------------------------------- the renderer must exist
+//
+// electron-builder.yml carries `extraResources: from: renderer`, and renderer/
+// is git-ignored on purpose — it is a build output of the WEB repo, and
+// vendoring it would mean two copies of the POS drifting apart. So it is absent
+// in every fresh clone, and electron-builder then either refuses the missing
+// source or ships an installer whose window opens on nothing.
+//
+// Same shape as the Capacitor cordova.variables.gradle failure in the web repo:
+// a directory the build config references unconditionally and .gitignore
+// excludes. Saying so here costs one check; finding it out from a packaged
+// installer costs the whole round trip.
+{
+  const renderer = join(process.cwd(), 'renderer', 'index.html');
+  if (!existsSync(renderer)) {
+    console.error('[build-windows] renderer/ is empty — there is no POS to package.');
+    console.error('');
+    console.error('  The renderer is built in the WEB repo and copied in here:');
+    console.error('');
+    console.error('      cd ..\\digitaltarget.digital');
+    console.error('      npm ci');
+    console.error('      npm run build:desktop');
+    console.error('      cd ..\\dtpos-desktop');
+    console.error('      npm run renderer');
+    console.error('');
+    console.error('  If the web repo is somewhere else, point DTPOS_RENDERER at its');
+    console.error('  dist-desktop\\client directory and run `npm run renderer` again.');
+    process.exit(1);
   }
 }
 
