@@ -76,18 +76,60 @@ jobs:
           cache: npm
           cache-dependency-path: shell/package-lock.json
 
-      # The Supabase keys are compiled into the renderer bundle. They are the
-      # PUBLISHABLE keys — the same ones the website already serves to every
-      # browser — never the service-role key, which must not exist in CI.
+      # ===== v1.28.6 — an unset secret was blanking the backend =====
+      #
+      # These were passed straight into the build step's env. A secret that was
+      # never set arrives as an EMPTY STRING, and an empty VITE_* variable
+      # OVERRIDES the committed .env — so the renderer was compiled with no
+      # Supabase configuration at all.
+      #
+      # The installer that produced looked fine and was unusable: isCloudConfigured()
+      # went false, App.tsx skipped the owner email screen it gates on, the staff
+      # screen took the Supabase path anyway (usingSupabaseAuth() is hard-true),
+      # and every correct password answered "This device is not linked to a
+      # restaurant yet. Sign in with the owner email first." — naming a screen the
+      # same defect had just hidden. Reported from a fresh Windows install.
+      #
+      # Exporting only what is actually set lets the committed .env stand.
+      - name: Resolve the Supabase build configuration
+        shell: bash
+        env:
+          S_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          S_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ -n "$S_URL" ]; then
+            echo "VITE_SUPABASE_URL=$S_URL" >> "$GITHUB_ENV"
+            echo "using VITE_SUPABASE_URL from repository secrets"
+          else
+            echo "no VITE_SUPABASE_URL secret — the committed .env will be used"
+          fi
+          if [ -n "$S_KEY" ]; then
+            echo "VITE_SUPABASE_PUBLISHABLE_KEY=$S_KEY" >> "$GITHUB_ENV"
+            echo "VITE_SUPABASE_ANON_KEY=$S_KEY" >> "$GITHUB_ENV"
+          fi
+
+      # The keys compiled into the renderer are the PUBLISHABLE ones — the same
+      # ones the website already serves to every browser. The service-role key
+      # must never exist in CI.
       - name: Build the POS client bundle
         working-directory: pos
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           npm ci
           npm run build:desktop
+
+      # Proving it, rather than trusting the step above. A bundle with no
+      # backend address produces an installer that cannot sign anyone in, and
+      # that is not something to discover on a till.
+      - name: Verify the bundle carries a backend
+        shell: bash
+        working-directory: pos
+        run: |
+          if grep -rqE 'https://[a-z0-9]+\.supabase\.co' dist-desktop/client/assets/*.js; then
+            echo "the renderer carries a Supabase URL"
+          else
+            echo "::error::The renderer was built with NO Supabase configuration. The installer would open, refuse every login, and tell the operator to sign in on a screen that cannot appear. Check the VITE_SUPABASE_* secrets, or remove them so the committed .env is used."
+            exit 1
+          fi
 
       - name: Install shell dependencies
         working-directory: shell
