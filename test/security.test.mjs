@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join, normalize, sep } from 'node:path';
+import { join, normalize, resolve, sep } from 'node:path';
 
 const root = process.cwd();
 const read = (p) => readFileSync(join(root, p), 'utf8');
@@ -56,7 +56,22 @@ function resolveWithinRoot(rootDir, pathname) {
 }
 
 test('app:// cannot be walked out of the renderer directory', () => {
-  const R = '/opt/dtpos/renderer';
+  // ===== v1.28.4 — this asserted nothing on Windows, and failed there =====
+  //
+  // The root was the literal '/opt/dtpos/renderer'. On Windows join() and
+  // normalize() return backslashes, so the candidate never started with a root
+  // spelled in forward slashes and EVERY path — including a legitimate asset —
+  // resolved to null. The first assertion failed, and the three traversal cases
+  // passed for the wrong reason: they were being refused by the separator
+  // mismatch rather than by the guard under test.
+  //
+  // The shell itself is unaffected. rendererRoot() builds its path with join()
+  // from process.resourcesPath or app.getAppPath(), so the real root always
+  // carries native separators. Only the test's hand-written POSIX string did
+  // not — which is why this only appeared once the suite ran on a Windows
+  // runner. Building the root from `sep` makes the guard actually execute on
+  // both platforms.
+  const R = resolve(sep, 'opt', 'dtpos', 'renderer');
   assert.ok(resolveWithinRoot(R, '/assets/index.js'), 'a normal asset must resolve');
   assert.equal(resolveWithinRoot(R, '/../../../etc/passwd'), null);
   assert.equal(resolveWithinRoot(R, '/assets/../../../../etc/shadow'), null);
