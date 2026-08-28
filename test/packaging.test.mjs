@@ -64,3 +64,17 @@ test('the workflow proves an installer was actually produced', () => {
   assert.match(workflow, /No installer was produced/);
   assert.match(workflow, /if-no-files-found: error/);
 });
+
+test('the tests run after the build outputs they read exist', () => {
+  // test/security.test.mjs imports out/shared/channels.js and resolves an
+  // asset under renderer/. Both are build outputs. Testing before they are
+  // produced failed two of them on every CI run while passing locally, where
+  // a previous build had already left the directories behind.
+  const order = (needle) => workflow.indexOf(needle);
+  assert.ok(order('run: npm run renderer') < order('npm test'),
+    'the renderer must be staged before the tests read it');
+  assert.ok(order('- name: Build the shell') < order('- name: Typecheck and test'),
+    'the shell must be compiled before the tests import out/');
+  assert.ok(order('- name: Typecheck and test') < order('- name: Build the installer'),
+    'the tests must still gate the installer');
+});

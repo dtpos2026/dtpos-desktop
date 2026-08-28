@@ -93,17 +93,32 @@ jobs:
         working-directory: shell
         run: npm ci
 
-      - name: Typecheck and test
-        working-directory: shell
-        run: |
-          npm run typecheck
-          npm test
-
       - name: Stage the renderer
         working-directory: shell
         env:
           DTPOS_RENDERER: ${{ github.workspace }}\pos\dist-desktop\client
         run: npm run renderer
+
+      # ===== v1.28.4 — the tests ran before the thing they test existed =====
+      #
+      # `npm test` imports out/shared/channels.js and resolves an asset under
+      # renderer/. Both are build outputs, and this step used to run BEFORE the
+      # renderer was staged and before the shell was compiled — so two of the
+      # security tests failed on every run with ERR_MODULE_NOT_FOUND and "a
+      # normal asset must resolve". They pass on a developer's machine, where
+      # a previous build has already left both directories in place, which is
+      # why it only ever showed up here.
+      #
+      # Compile first, stage first, then test what will actually be packaged.
+      - name: Build the shell
+        working-directory: shell
+        run: npm run build
+
+      - name: Typecheck and test
+        working-directory: shell
+        run: |
+          npm run typecheck
+          npm test
 
       # Through scripts/build-windows.mjs, not electron-builder directly: the
       # script sets CSC_IDENTITY_AUTO_DISCOVERY=false, which is what keeps the
