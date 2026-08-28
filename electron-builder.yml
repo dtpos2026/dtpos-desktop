@@ -64,8 +64,21 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: DT POS
-  installerIcon: build/icon.png
-  uninstallerIcon: build/icon.png
+  # ===== v1.28.4 — these two aborted the installer, every time =====
+  #
+  #     Error while loading icon from "...\build\icon.png": invalid icon file
+  #     Error in macro MUI_INTERFACE on macroline 87
+  #     Error in script "<stdin>" on line 110 -- aborting creation process
+  #
+  # electron-builder converts win.icon from PNG to .ico itself, which is why
+  # the packaged app carried its icon correctly. installerIcon and
+  # uninstallerIcon are NOT converted — they are handed to NSIS verbatim, and
+  # NSIS only reads .ico. So the build packed the whole application, reached
+  # the installer step, and died there with the app never at fault.
+  #
+  # Omitting them makes NSIS use the icon electron-builder already converted
+  # from win.icon, which is the same artwork and needs no second file to keep
+  # in step. Set them again only alongside a real build/icon.ico.
   # Leaves userData (the offline JSON store and the sync queue) in place, so an
   # upgrade never costs a restaurant its unsynced bills.
   deleteAppDataOnUninstall: false

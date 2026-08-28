@@ -78,3 +78,23 @@ test('the tests run after the build outputs they read exist', () => {
   assert.ok(order('- name: Typecheck and test') < order('- name: Build the installer'),
     'the tests must still gate the installer');
 });
+
+test('NSIS is never handed a PNG where it needs an .ico', () => {
+  // electron-builder converts win.icon from PNG to .ico itself. installerIcon
+  // and uninstallerIcon are passed to NSIS verbatim, and NSIS reads only .ico:
+  //
+  //   Error while loading icon from "...\build\icon.png": invalid icon file
+  //   Error in script "<stdin>" on line 110 -- aborting creation process
+  //
+  // The whole application packed successfully and the build died at the
+  // installer, so nothing in the app was ever wrong.
+  //
+  // Read as text rather than parsed: the shell has no YAML dependency, and
+  // adding one so a test can read four lines is the wrong trade.
+  for (const key of ['installerIcon', 'uninstallerIcon', 'installerHeaderIcon']) {
+    const m = new RegExp(`^\\s*${key}:\\s*(\\S+)`, 'm').exec(builder);
+    if (m) assert.match(m[1], /\.ico$/i, `nsis.${key} must be an .ico, got ${m[1]}`);
+  }
+  // The app icon may stay a PNG — that one IS converted.
+  assert.match(builder, /^\s*icon: build\/icon\.png$/m);
+});
