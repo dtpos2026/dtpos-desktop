@@ -80,7 +80,15 @@ export function serveAppScheme(rootDir: string): void {
 
     const resolved = resolveWithinRoot(rootDir, decodeURIComponent(url.pathname));
     if (!resolved) {
-      return new Response('Forbidden', { status: 403 });
+      // ===== v1.29.0 — "Forbidden" with nothing else to go on =====
+      //
+      // This is a path-traversal refusal, and it should be rare enough to be
+      // suspicious. Reported from a Windows install as the answer to a staff
+      // login, where it named neither the path nor the root it was measured
+      // against — so there was no way to tell an attack from a packaging
+      // mistake. Both facts are logged, and the body says which path.
+      console.error(`[protocol] refused ${url.pathname} — outside ${rootDir}`);
+      return new Response(`Forbidden: ${url.pathname}`, { status: 403 });
     }
 
     // The POS is a single-route SPA that navigates by hash, but a deep link or
