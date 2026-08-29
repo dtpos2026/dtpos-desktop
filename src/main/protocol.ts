@@ -120,10 +120,38 @@ async function proxyServerFn(request: Request, url: URL): Promise<Response> {
       body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
       duplex: 'half',
     } as RequestInit);
+    // ===== v1.29.0 — "Forbidden" was all the operator got =====
+    //
+    // REPORTED from a Windows install: signing in as a staff user answered
+    // "Forbidden", with nothing to say where it came from.
+    //
+    // It came from HERE, forwarded verbatim. A server function is proxied to
+    // API_ORIGIN, and when that host refuses — the wrong domain, a deployment
+    // that does not carry this function, a firewall in between — the upstream
+    // body is a bare status line, which the POS then shows as the login error.
+    // The one fact needed to diagnose it, WHICH ORIGIN was called, was the one
+    // fact nowhere in the message.
+    //
+    // A successful response is still passed through untouched. Only a refusal
+    // that is not already JSON is rewritten, so nothing that works changes.
+    const contentType = upstream.headers.get('content-type') ?? '';
+    if (!upstream.ok && !contentType.includes('json')) {
+      const text = (await upstream.text()).slice(0, 300);
+      return new Response(
+        JSON.stringify({
+          error:
+            `${API_ORIGIN} refused this request (HTTP ${upstream.status}${text ? `: ${text.trim()}` : ''}). ` +
+            'The desktop app forwards logins to that address. If the POS is served ' +
+            'from somewhere else, set DTPOS_API_ORIGIN to it.',
+        }),
+        { status: upstream.status, headers: { 'content-type': 'application/json' } },
+      );
+    }
+
     return new Response(upstream.body, {
       status: upstream.status,
       headers: {
-        'content-type': upstream.headers.get('content-type') ?? 'application/json',
+        'content-type': contentType || 'application/json',
       },
     });
   } catch (e) {

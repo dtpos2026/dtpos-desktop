@@ -98,3 +98,16 @@ test('NSIS is never handed a PNG where it needs an .ico', () => {
   // The app icon may stay a PNG — that one IS converted.
   assert.match(builder, /^\s*icon: build\/icon\.png$/m);
 });
+
+test('a refused server-function names the origin it called', () => {
+  // REPORTED from a Windows install: staff login answered "Forbidden" and
+  // nothing else. It came from the proxy below, forwarded verbatim: when
+  // API_ORIGIN refuses, the upstream body is a bare status line and the POS
+  // shows it as the login error. Which origin was called — the one fact needed
+  // to diagnose it — was nowhere in the message.
+  const protocol = readFileSync('src/main/protocol.ts', 'utf8');
+  assert.match(protocol, /refused this request \(HTTP \$\{upstream\.status\}/);
+  assert.match(protocol, /DTPOS_API_ORIGIN/);
+  // A working response must still pass through untouched.
+  assert.match(protocol, /if \(!upstream\.ok && !contentType\.includes\('json'\)\)/);
+});
