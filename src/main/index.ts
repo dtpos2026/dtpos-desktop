@@ -10,7 +10,7 @@ import { app, BrowserWindow, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerAppScheme, serveAppScheme, APP_ORIGIN } from './protocol';
-import { hardenWindow, hardenSession } from './security';
+import { hardenWindow, hardenWebContents, hardenSession } from './security';
 import { registerAllIpc } from './ipc';
 
 // Node is never available to the page, so this is the only place it exists.
@@ -92,6 +92,12 @@ function createWindow(): void {
       nodeIntegration: false,   // no require() in the page
       sandbox: true,            // renderer runs in the OS sandbox
       webSecurity: true,        // same-origin policy stays on
+      // v1.29.2 — the WhatsApp module IS a <webview>, and without this the
+      // element never becomes a renderer: blank panel, no linking QR. Not a
+      // blanket permission — will-attach-webview in security.ts admits
+      // web.whatsapp.com alone and rewrites the attached renderer's privileges
+      // instead of trusting the attributes it was handed.
+      webviewTag: true,
       // Devtools ship disabled: a till is operated by staff, not developers.
       devTools: !app.isPackaged,
       spellcheck: false,
@@ -112,10 +118,13 @@ function createWindow(): void {
   void win.loadURL(`${APP_ORIGIN}/`);
 }
 
-// Belt and braces: refuse to attach a preload to anything we did not create,
-// and never allow a second one to be injected.
+// Belt and braces: every WebContents the app ever creates gets the same
+// attach guard, including ones this file did not make. hardenContents() is the
+// single place that decides which webview source is allowed and what
+// privileges it may keep, so this defers to it rather than keeping a second,
+// stricter copy of the rule that silently overrode it.
 app.on('web-contents-created', (_e, contents) => {
-  contents.on('will-attach-webview', (event) => event.preventDefault());
+  hardenWebContents(contents);
 });
 
 export { shell };

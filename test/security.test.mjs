@@ -178,3 +178,64 @@ test('no secret is baked into the shell', () => {
   assert.doesNotMatch(all, /service_role|sb_secret_|SUPABASE_SERVICE|eyJhbGciOi/);
   assert.doesNotMatch(all, /(api[_-]?key|secret|password)\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/i);
 });
+
+// ---------------------------------------------------------------------------
+// v1.29.2 — the one webview the POS genuinely has
+//
+// REPORTED: "DT POS Windows me WhatsApp QR nahi aata, jis wajah se device link
+// nahi ho sakta — pehle aata tha."
+//
+// PersistentWhatsApp.tsx renders a <webview> at web.whatsapp.com, and only
+// under Electron. The shell refused to attach ANY webview, in two places, under
+// a comment claiming the POS uses none. So the panel mounted blank: no QR, no
+// way to link a phone.
+//
+// Admitting it must not become a general permission. These assert that exactly
+// one origin gets through and that what it gets is rewritten, not trusted.
+test('the WhatsApp webview is admitted, and nothing else is', () => {
+  const security = readFileSync('src/main/security.ts', 'utf8');
+  const index = readFileSync('src/main/index.ts', 'utf8');
+
+  // Enabled, or the element never becomes a renderer at all.
+  assert.match(index, /webviewTag: true/);
+
+  // One origin, compared as an ORIGIN — not a substring, which
+  // "https://web.whatsapp.com.evil.test" would satisfy.
+  assert.match(security, /WEBVIEW_ALLOWED_ORIGINS = \['https:\/\/web\.whatsapp\.com'\]/);
+  assert.match(security, /WEBVIEW_ALLOWED_ORIGINS\.includes\(new URL\(raw\)\.origin\)/);
+
+  // Anything else is still refused.
+  assert.match(security, /if \(!isAllowedWebviewSrc\(params\.src\)\) \{\s*event\.preventDefault\(\);/);
+});
+
+test('the attached webview cannot ask for privileges', () => {
+  // will-attach-webview receives preferences built from the ELEMENT'S OWN
+  // ATTRIBUTES. A page that can write those must not be able to request node
+  // integration or a preload script, so every one is overwritten.
+  const security = readFileSync('src/main/security.ts', 'utf8');
+  const handler = security.slice(security.indexOf("contents.on('will-attach-webview'"));
+
+  assert.match(handler, /delete \(webPreferences as \{ preload\?: string \}\)\.preload/);
+  for (const [key, value] of [
+    ['nodeIntegration', 'false'],
+    ['nodeIntegrationInSubFrames', 'false'],
+    ['contextIsolation', 'true'],
+    ['sandbox', 'true'],
+    ['webSecurity', 'true'],
+    ['allowRunningInsecureContent', 'false'],
+  ]) {
+    assert.match(handler, new RegExp(`webPreferences\\.${key} = ${value}`), `${key} must be forced`);
+  }
+});
+
+test('one place owns the webview rule', () => {
+  // index.ts kept a second, stricter copy that refused every attach and
+  // silently overrode security.ts. That is how the module came to be dead
+  // while the code that was supposed to allow it looked correct.
+  const index = readFileSync('src/main/index.ts', 'utf8');
+  assert.ok(
+    !/contents\.on\('will-attach-webview', \(event\) => event\.preventDefault\(\)\)/.test(index),
+    'index.ts must not keep its own blanket refusal',
+  );
+  assert.match(index, /hardenWebContents\(contents\)/);
+});

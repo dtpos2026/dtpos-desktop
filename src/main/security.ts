@@ -43,10 +43,52 @@ export function openExternalSafely(rawUrl: unknown): void {
   void shell.openExternal(rawUrl);
 }
 
-/** Window-level guards: no popups, no navigating away, no webview. */
+/**
+ * ===== v1.29.2 — the one webview the POS genuinely has =====
+ *
+ * REPORTED: "DT POS Windows me WhatsApp QR nahi aata, jis wajah se device link
+ * nahi ho sakta — pehle aata tha."
+ *
+ * PersistentWhatsApp.tsx renders a <webview> pointed at web.whatsapp.com, and
+ * renders it ONLY under Electron (`if (!isElectron()) return null`). That
+ * webview is where the linking QR appears. The guard below refused to attach
+ * ANY webview, under a comment saying the POS uses none — which was not true.
+ * So the module mounted, the element never became a renderer, and the operator
+ * got a blank panel with no QR and no way to link a phone.
+ *
+ * Turning webviewTag on by itself would hand every page in the app the ability
+ * to spawn a second renderer, which is what this guard exists to prevent. So
+ * the allowance is narrow: this origin and no other. Everything the attached
+ * webview is given is then OVERWRITTEN rather than trusted — attach-time
+ * preferences come from the element's own attributes, so a page that can set
+ * them must not be able to ask for node integration or a preload script.
+ */
+const WEBVIEW_ALLOWED_ORIGINS = ['https://web.whatsapp.com'];
+
+function isAllowedWebviewSrc(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false;
+  try {
+    return WEBVIEW_ALLOWED_ORIGINS.includes(new URL(raw).origin);
+  } catch {
+    return false;
+  }
+}
+
+/** Window-level guards: no popups, no navigating away, one allow-listed webview. */
 export function hardenWindow(win: BrowserWindow): void {
   hardenContents(win.webContents);
   win.webContents.on('did-create-window', (child) => hardenContents(child.webContents));
+}
+
+/**
+ * The same guards, applied to a WebContents the window did not create.
+ *
+ * index.ts used to keep its own, stricter copy of the webview rule here, which
+ * refused every attach and quietly overrode whatever this file decided. One
+ * place owns the rule now, so the two cannot disagree again.
+ */
+export function hardenWebContents(contents: WebContents): void {
+  hardenContents(contents);
 }
 
 function hardenContents(contents: WebContents): void {
@@ -64,8 +106,24 @@ function hardenContents(contents: WebContents): void {
     openExternalSafely(url);
   });
 
-  // <webview> is a second renderer with its own settings; the POS uses none.
-  contents.on('will-attach-webview', (event) => event.preventDefault());
+  // A <webview> is a second renderer with its own settings. Exactly one is
+  // legitimate — WhatsApp Web, for linking a phone and sending order messages —
+  // and it is admitted by ORIGIN, with its privileges rewritten rather than
+  // trusted.
+  contents.on('will-attach-webview', (event, webPreferences, params) => {
+    if (!isAllowedWebviewSrc(params.src)) {
+      event.preventDefault();
+      return;
+    }
+    delete (webPreferences as { preload?: string }).preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+    webPreferences.experimentalFeatures = false;
+  });
 }
 
 /**
