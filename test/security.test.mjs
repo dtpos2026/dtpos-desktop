@@ -239,3 +239,32 @@ test('one place owns the webview rule', () => {
   );
   assert.match(index, /hardenWebContents\(contents\)/);
 });
+
+test('geolocation is granted to our own pages, and to nothing else', () => {
+  // REPORTED from Windows: "GPS error: User denied Geolocation". The handler
+  // refused every permission, while AppLayout, CustomerProfilePanel,
+  // staffLocation, supabaseSync and geo.ts all call getCurrentPosition. No
+  // operator had denied anything — this file had.
+  const security = readFileSync('src/main/security.ts', 'utf8');
+  const session = security.slice(security.indexOf('export function hardenSession'));
+
+  assert.match(session, /permission === 'geolocation'/, 'geolocation must be handled');
+  assert.match(session, /callback\(mayLocate\(wc\)\)/, 'the request handler must consult mayLocate');
+
+  // Both handlers, or Chromium answers a check differently from a request.
+  assert.match(session, /setPermissionRequestHandler/);
+  assert.match(session, /setPermissionCheckHandler/);
+
+  // Matched by ORIGIN. startsWith('app://dtpos') would also admit
+  // app://dtpos.evil.test, and the WhatsApp webview is a real renderer that
+  // must never be able to locate the till.
+  assert.match(session, /u\.protocol === 'app:'/, 'scheme must be checked');
+  assert.match(session, /u\.host === 'dtpos'/, 'host must be checked exactly');
+  assert.ok(!/startsWith\(['"]app:\/\//.test(session), 'must not match the origin by prefix');
+
+  // Everything else still refused.
+  assert.match(session, /callback\(false\)/, 'unlisted permissions must still be denied');
+  for (const p of ['media', 'microphone', 'camera', 'notifications', 'midi']) {
+    assert.ok(!new RegExp(`'${p}'`).test(session), `${p} must not be granted`);
+  }
+});

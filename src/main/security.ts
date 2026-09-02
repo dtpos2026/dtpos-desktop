@@ -137,12 +137,45 @@ function hardenContents(contents: WebContents): void {
 export function hardenSession(): void {
   const ses = session.defaultSession;
 
-  // The POS asks for none of these. Granting silently is how a compromised page
-  // turns into a microphone.
-  ses.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'clipboard-sanitized-write');
+  // ===== geolocation was denied, and the POS does ask for it =====
+  //
+  // REPORTED from Windows: "GPS error: User denied Geolocation".
+  //
+  // The comment here used to say the POS asks for none of these. It does:
+  // AppLayout, CustomerProfilePanel, staffLocation, supabaseSync and geo.ts all
+  // call navigator.geolocation.getCurrentPosition — for a delivery address, for
+  // the live rider map, for staff location. Denying every request turned each
+  // of those into that exact error message, on every till, always. Nobody had
+  // denied anything; this handler had.
+  //
+  // Scoped by the REQUESTING page, not granted blanket. Only our own app://
+  // content may ask. The WhatsApp webview is a full renderer on
+  // web.whatsapp.com and must never be able to locate the till, so it is
+  // matched by origin — startsWith would let app://dtpos.evil.test through.
+  const mayLocate = (wc: Electron.WebContents | null | undefined): boolean => {
+    try {
+      const u = new URL(wc?.getURL() ?? '');
+      return u.protocol === 'app:' && u.host === 'dtpos';
+    } catch {
+      return false;
+    }
+  };
+
+  const ALWAYS = new Set(['clipboard-sanitized-write']);
+
+  ses.setPermissionRequestHandler((wc, permission, callback) => {
+    if (ALWAYS.has(permission)) return callback(true);
+    if (permission === 'geolocation') return callback(mayLocate(wc));
+    // Everything else still refused. Granting silently is how a compromised
+    // page turns into a microphone.
+    callback(false);
   });
-  ses.setPermissionCheckHandler((_wc, permission) => permission === 'clipboard-sanitized-write');
+
+  ses.setPermissionCheckHandler((wc, permission) => {
+    if (ALWAYS.has(permission)) return true;
+    if (permission === 'geolocation') return mayLocate(wc);
+    return false;
+  });
 
   // No devtools extensions, no remote debugging surface in a shipped till.
   if (app.isPackaged) {
