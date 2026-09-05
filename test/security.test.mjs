@@ -258,13 +258,83 @@ test('geolocation is granted to our own pages, and to nothing else', () => {
   // Matched by ORIGIN. startsWith('app://dtpos') would also admit
   // app://dtpos.evil.test, and the WhatsApp webview is a real renderer that
   // must never be able to locate the till.
-  assert.match(session, /u\.protocol === 'app:'/, 'scheme must be checked');
-  assert.match(session, /u\.host === 'dtpos'/, 'host must be checked exactly');
-  assert.ok(!/startsWith\(['"]app:\/\//.test(session), 'must not match the origin by prefix');
+  //
+  // The check lives in isOurPage() — ONE definition now shared by geolocation,
+  // the camera and the print window, rather than three copies that can drift
+  // apart. Asserted on the helper, so the guarantee is unchanged.
+  const ours = security.slice(security.indexOf('function isOurPage'),
+                              security.indexOf('function hardenContents'));
+  assert.match(ours, /u\.protocol === 'app:'/, 'scheme must be checked');
+  assert.match(ours, /u\.host === 'dtpos'/, 'host must be checked exactly');
+  assert.match(session, /mayLocate/, 'geolocation must go through the shared check');
+  // Strip comments first: the comment above isOurPage explains WHY the prefix
+  // match is wrong, and quoting it is not doing it.
+  const securityCode = security
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  assert.ok(!/startsWith\(['"]app:\/\//.test(securityCode), 'must not match the origin by prefix');
 
   // Everything else still refused.
   assert.match(session, /callback\(false\)/, 'unlisted permissions must still be denied');
-  for (const p of ['media', 'microphone', 'camera', 'notifications', 'midi']) {
+  for (const p of ['microphone', 'camera', 'notifications', 'midi']) {
     assert.ok(!new RegExp(`'${p}'`).test(session), `${p} must not be granted`);
   }
+});
+
+test('the camera is granted for video only, to our own pages, and never the mic', () => {
+  // REPORTED from Windows, on Barcode & Labels: "Could not open the camera:
+  // NotAllowedError: Permission denied".
+  //
+  // This test used to assert that 'media' appeared NOWHERE in the file. That
+  // encoded a belief which is simply false — the barcode scanner calls
+  // getUserMedia({ video: true }) to read a label — so the assertion was
+  // protecting a bug. It is replaced by a STRICTER rule, not a weaker one:
+  // video only, our own pages only, and the microphone still unreachable.
+  const security = readFileSync('src/main/security.ts', 'utf8');
+  const session = security.slice(security.indexOf('export function hardenSession'));
+
+  assert.match(session, /permission === 'media'/, 'media must be handled');
+  assert.match(session, /mayUseCamera/, 'the request handler must consult mayUseCamera');
+
+  const fn = security.slice(security.indexOf('const mayUseCamera'),
+                            security.indexOf('ses.setPermissionRequestHandler'));
+  assert.match(fn, /isOurPage\(wc\)/, 'only our own page may ask');
+  assert.match(fn, /every\(t => t === 'video'\)/, 'every requested type must be video');
+  // An audio request must not slip through by arriving alongside a video one,
+  // and a request that names no type at all must be refused rather than
+  // assumed harmless.
+  assert.ok(/length === 0/.test(fn), 'a request naming no media type must be refused');
+  assert.ok(!/'audio'/.test(fn), 'audio must never be admitted');
+
+  // The synchronous check must agree with the request handler, or the answer
+  // depends on which path Chromium took.
+  const check = security.slice(security.indexOf('ses.setPermissionCheckHandler'));
+  assert.match(check, /mediaType === 'video'/, 'the check handler must also be video-only');
+  assert.match(check, /isOurPage\(wc\)/, 'the check handler must also scope by page');
+});
+
+test('the app may open its own blank print window, and nothing else', () => {
+  // REPORTED: "The popup was blocked — please allow it", on Item Sales Report,
+  // Barcode & Labels and the invoice preview. Nothing was blocked by Windows:
+  // setWindowOpenHandler denied EVERY window, and the app opens a window to
+  // print — six places call window.open('', '_blank', ...), write the document
+  // into it, and call print(). Denied, window.open returns null.
+  const security = readFileSync('src/main/security.ts', 'utf8');
+  const handler = security.slice(security.indexOf('contents.setWindowOpenHandler'),
+                                 security.indexOf("contents.on('will-navigate'"));
+
+  // Only a BLANK window, and only from our own page.
+  assert.match(handler, /url === 'about:blank'/);
+  assert.match(handler, /isOurPage\(contents\)/);
+  assert.match(handler, /action:\s*'allow'/);
+
+  // A real destination still goes to the real browser.
+  assert.match(handler, /openExternalSafely\(url\)/);
+  assert.match(handler, /action:\s*'deny'/);
+
+  // The print sheet is a renderer with no privileges and no bridge.
+  assert.match(handler, /nodeIntegration:\s*false/);
+  assert.match(handler, /contextIsolation:\s*true/);
+  assert.match(handler, /sandbox:\s*true/);
+  assert.match(handler, /preload:\s*undefined/);
 });
