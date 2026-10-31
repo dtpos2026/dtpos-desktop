@@ -338,3 +338,12 @@ test('the app may open its own blank print window, and nothing else', () => {
   assert.match(handler, /sandbox:\s*true/);
   assert.match(handler, /preload:\s*undefined/);
 });
+
+// ---------------------------------------------------------------------------
+// v1.74.0 — the window opens in the POS's colour and only once it has painted: no white or slate flash before the splash
+test('the window is hidden until the first paint, and is the POS colour behind it', () => {
+  const main = read('src/main/index.ts');
+  assert.match(main, /show:\s*false/, 'the window must start hidden');
+  assert.match(main, /once\('ready-to-show',\s*\(\)\s*=>\s*win\.show\(\)\)/, 'and be shown on ready-to-show');
+  assert.match(main, /backgroundColor:\s*'#40066f'/, 'the default theme\'s purple, not a stand-in colour');
+});

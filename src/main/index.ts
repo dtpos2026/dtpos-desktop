@@ -81,7 +81,9 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 640,
     show: false,
-    backgroundColor: '#0f172a',
+    // The colour the POS opens in (the default theme's primary, hsl(273 89% 23%)): the window shows only after the
+    // page has painted, and what it paints first is the boot splash in the restaurant's own colour.
+    backgroundColor: '#40066f',
     autoHideMenuBar: true,
     title: 'DT POS',
     icon: join(__dirname, '..', '..', 'build', 'icon.png'),
