@@ -34,6 +34,12 @@ win:
       arch: [x64]
   icon: build/icon.png
   artifactName: DT-POS-Setup-${version}.${ext}
+  # ===== v1.77.0 — the program itself never asks for Administrator =====
+  #
+  # Installing into Program Files needs it (the installer asks once). RUNNING the POS does not: everything it writes
+  # lives in the user's profile (%APPDATA%\\DT POS). Saying so in the manifest means a shortcut click starts a normal
+  # copy, and a copy started "as Administrator" is never the only way in.
+  requestedExecutionLevel: asInvoker
   # No signing certificate is configured. Windows SmartScreen will warn on
   # first run until one is added here — see README.
   verifyUpdateCodeSignature: false
@@ -64,6 +70,9 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: DT POS
+  # Offer to start the POS when the installer finishes, as the normal user (electron-builder de-elevates the launch),
+  # so the first start is not an elevated copy that a later shortcut click cannot reach.
+  runAfterFinish: true
   # ===== v1.28.4 — these two aborted the installer, every time =====
   #
   #     Error while loading icon from "...\build\icon.png": invalid icon file

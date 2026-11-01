@@ -6,13 +6,15 @@
 // backend. All of that is the existing web application, loaded unchanged from
 // the client bundle and reached over app://.
 // ============================================================================
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerAppScheme, serveAppScheme, APP_ORIGIN } from './protocol';
 import { hardenWindow, hardenWebContents, hardenSession } from './security';
 import { registerAllIpc } from './ipc';
-import { setMainWindow } from './mainWindow';
+import { setMainWindow, getMainWindow } from './mainWindow';
+import { initLaunchLog, launchLog } from './launchLog';
+import { writeAck, waitForAck, UNREACHABLE_TITLE, UNREACHABLE_MESSAGE } from './singleInstance';
 
 // Node is never available to the page, so this is the only place it exists.
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = '';
@@ -36,23 +38,63 @@ function rendererRoot(): string {
 // Registering the scheme must happen before 'ready'.
 registerAppScheme();
 
+// ===== Launch diagnostics (v1.77.0) =====
+//
+// "I clicked the shortcut and nothing happened" leaves nothing behind. Every launch step is written to
+// <userData>/logs/launch.log, so the next report comes with the answer.
+let userDataDir = '';
+try { userDataDir = app.getPath('userData'); initLaunchLog(userDataDir); } catch { /* logging is best effort */ }
+launchLog('start', { version: app.getVersion(), packaged: app.isPackaged, exe: process.execPath, args: process.argv.slice(1) });
+process.on('uncaughtException', (e) => { launchLog('uncaughtException', e); });
+process.on('unhandledRejection', (e) => { launchLog('unhandledRejection', e instanceof Error ? e : String(e)); });
+// Is this copy elevated? Logged only: knowing it turns a "can't reach the other copy" report into a one-line answer.
+if (process.platform === 'win32') {
+  void import('node:child_process').then(({ execFile }) => {
+    execFile('net', ['session'], { windowsHide: true, timeout: 4000 }, (err) => launchLog('elevated', !err));
+  }).catch(() => {});
+}
+
 // A second copy of a POS on one till means two devices racing the same shift
 // and the same order counter. Refuse, and surface the window already running.
+const startedAt = Date.now();
 if (!app.requestSingleInstanceLock()) {
-  app.quit();
+  launchLog('second launch: lock held by another copy, handing over');
+  // The copy that is running writes a note when it receives the hand-over. If none arrives it cannot be reached
+  // (it is elevated and this one is not, or it is stuck) — say so instead of quitting without a word.
+  void waitForAck(userDataDir, startedAt - 50).then(async (reached) => {
+    launchLog('second launch: hand-over', reached ? 'acknowledged' : 'NOT acknowledged');
+    if (!reached) {
+      await app.whenReady();
+      dialog.showMessageBoxSync({ type: 'warning', title: UNREACHABLE_TITLE, message: UNREACHABLE_TITLE, detail: UNREACHABLE_MESSAGE, buttons: ['OK'] });
+    }
+    app.quit();
+  });
 } else {
-  app.on('second-instance', () => {
-    const [win] = BrowserWindow.getAllWindows();
+  // The window a second launch should surface is the POS window — never "the first window Electron lists", which can
+  // be the printing engine's hidden worker. If the POS window is gone, make a new one rather than doing nothing.
+  const surfaceMainWindow = (): void => {
+    let win = getMainWindow();
+    if (!win) { launchLog('second-instance: no POS window, creating one'); createWindow(); win = getMainWindow(); }
     if (!win) return;
     if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.show();
+    // Windows refuses to let a background process take the foreground; a brief always-on-top is the sanctioned nudge.
+    win.setAlwaysOnTop(true);
     win.focus();
+    win.setAlwaysOnTop(false);
+  };
+
+  app.on('second-instance', () => {
+    launchLog('second-instance: another launch reached this copy');
+    writeAck(userDataDir);
+    if (app.isReady()) surfaceMainWindow(); else void app.whenReady().then(surfaceMainWindow);
   });
 
   app.whenReady().then(() => {
     const root = rendererRoot();
     if (!existsSync(join(root, 'index.html'))) {
+      launchLog('renderer missing', root);
       // Better a clear message than a white window nobody can diagnose.
-      const { dialog } = require('electron') as typeof import('electron');
       dialog.showErrorBox(
         'DT POS could not start',
         `The application files are missing from:\n\n${root}\n\n` +
@@ -66,6 +108,7 @@ if (!app.requestSingleInstanceLock()) {
     hardenSession();
     registerAllIpc();
     createWindow();
+    launchLog('ready: window created', root);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -73,6 +116,9 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => app.quit());
+  app.on('before-quit', () => launchLog('quit'));
+  app.on('child-process-gone', (_e, d) => launchLog('child-process-gone', d));
+  app.on('render-process-gone', (_e, _wc, d) => launchLog('render-process-gone', d));
 }
 
 function createWindow(): void {
@@ -110,8 +156,24 @@ function createWindow(): void {
   setMainWindow(win);
   hardenWindow(win);
 
+  // ===== Closing the POS window ends the program (v1.77.0) =====
+  //
+  // The printing engine keeps a hidden BrowserWindow. Electron only fires `window-all-closed` when EVERY window is
+  // gone, so closing the POS left the process alive — still holding the single-instance lock — and the next click on
+  // the shortcut quit silently because "a copy is already running". Take the helper windows down with the POS window.
+  win.on('closed', () => {
+    launchLog('main window closed');
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { if (!w.isDestroyed()) w.destroy(); } catch { /* already going */ }
+    }
+    app.quit();
+  });
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => launchLog('did-fail-load', { code, desc, url }));
+  win.webContents.on('render-process-gone', (_e, d) => launchLog('main renderer gone', d));
+
   // Avoid the white flash before the POS paints — jarring on a shop counter.
   win.once('ready-to-show', () => win.show());
+  win.once('show', () => launchLog('window shown'));
 
   if (!app.isPackaged && process.env.DTPOS_SMOKE) {
     void import('./dev/smoke').then((m) => m.attachSmokeProbe(win));

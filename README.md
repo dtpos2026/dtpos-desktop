@@ -126,3 +126,25 @@ The POS already owns the update decision: it compares its own `APP_VERSION`
 against `getAppVersion()` and shows its own banner. This shell only downloads
 what it is handed and launches it. `electron-updater` is deliberately **not**
 enabled — two update mechanisms racing on one till is worse than none.
+
+## Launch troubleshooting
+
+**Symptom:** the app opened after installing, but clicking the shortcut again does nothing.
+
+**What was wrong (fixed in v1.77.0):** closing the POS window did not end the program — the printing engine keeps a hidden
+window — so a copy stayed running in the background holding the "one copy only" lock. The next click started a second
+copy, which quit at once, while the background copy focused its hidden window. The POS window is now what closes the
+program, a second launch always surfaces (or recreates) the POS window, and the program itself never asks for
+Administrator (`requestedExecutionLevel: asInvoker`; only the installer needs it, because it writes to Program Files).
+
+**If it still happens on a till:**
+1. Open `%APPDATA%\DT POS\logs\launch.log`. Each launch writes a line for every step: `start`, `elevated` (true/false),
+   `second launch: lock held…`, `hand-over acknowledged / NOT acknowledged`, `window shown`, `main window closed`, and
+   any `uncaughtException`, `did-fail-load` or `render-process-gone`. Send that file to support.
+2. If DT POS says "already running but could not be brought to the front": a copy is running elevated (started with
+   *Run as administrator*) while this one is not — Windows does not let them talk. Open Task Manager (Ctrl+Shift+Esc),
+   end every **DT POS** process, then open DT POS from its shortcut. Do not start it as Administrator again.
+3. Installing needs Administrator once (per-machine install). Running never does.
+
+**Not verified in the build environment:** a real install, the UAC prompt and the shortcut click need a Windows PC.
+The acceptance script is in `docs/qa/` of the web repository (UAT-W1…W6).
