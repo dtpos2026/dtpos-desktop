@@ -14,7 +14,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('out',{recursive:true,force:true})\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "npm run clean && tsc -p tsconfig.json && node scripts/build-preload.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/copy-engine.mjs && node scripts/build-preload.mjs",
     "renderer": "node scripts/sync-renderer.mjs",
     "start": "npm run build && electron .",
     "pack": "npm run build && node scripts/build-windows.mjs --dir",

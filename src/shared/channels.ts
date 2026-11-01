@@ -27,10 +27,20 @@ export const INVOKE_CHANNELS = [
   'showOpenDialog',
 
   // --- printing -------------------------------------------------------------
+  // The fast-printing engine of the offline DT POS Enterprise v1.21.0 (src/main/printing-engine).
   'getPrinters',
+  'getPrinterDetails',
   'printReceipt',
+  'printHtml',
+  'printHtmlEscpos',
+  'printRaw',
+  'printWindowsTestPage',
+  'openPrinterProperties',
+  'resetPrintStrategy',
+  'getPrintDiagnostics',
   'printLanEscpos',
   'testLanPrinter',
+  'scanLanPrinters',
   'pingHost',
   'spoolerStatus',
   'restartSpooler',

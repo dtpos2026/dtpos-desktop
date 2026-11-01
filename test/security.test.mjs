@@ -36,10 +36,13 @@ test('preload never hands the page a raw ipcRenderer or a caller-named channel',
 test('preload exposes exactly the declared contract, and nothing more', async () => {
   const { INVOKE_CHANNELS } = await import('../out/shared/channels.js');
   const declared = new Set([...INVOKE_CHANNELS, 'openExternal', 'onUpdateProgress']);
-  assert.equal(declared.size, 24, `expected 24 exposed methods, got ${declared.size}`);
+  // 24 before the v1.21.0 printing engine came over; +9 for it (printHtml, printHtmlEscpos, printRaw, getPrinterDetails,
+  // printWindowsTestPage, openPrinterProperties, resetPrintStrategy, getPrintDiagnostics, scanLanPrinters).
+  assert.equal(declared.size, 33, `expected 33 exposed methods, got ${declared.size}`);
   // Every invoke channel must be a real handler in main, not just a name.
-  const handlers = ['system', 'files', 'printing', 'updates', 'pra']
-    .map((f) => read(`src/main/ipc/${f}.ts`))
+  const handlers = [...['system', 'files', 'printing', 'updates', 'pra'].map((f) => read(`src/main/ipc/${f}.ts`)),
+    // the printing channels are registered by the engine brought over from v1.21.0
+    read('src/main/printing-engine/engine.cjs')]
     .join('\n');
   for (const c of INVOKE_CHANNELS) {
     assert.match(handlers, new RegExp(`\\bhandle\\(\\s*'${c}'`), `no main handler for "${c}"`);

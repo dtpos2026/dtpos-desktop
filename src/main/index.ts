@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { registerAppScheme, serveAppScheme, APP_ORIGIN } from './protocol';
 import { hardenWindow, hardenWebContents, hardenSession } from './security';
 import { registerAllIpc } from './ipc';
+import { setMainWindow } from './mainWindow';
 
 // Node is never available to the page, so this is the only place it exists.
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = '';
@@ -106,6 +107,7 @@ function createWindow(): void {
     },
   });
 
+  setMainWindow(win);
   hardenWindow(win);
 
   // Avoid the white flash before the POS paints — jarring on a shop counter.
